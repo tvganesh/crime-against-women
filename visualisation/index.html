@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+    <title>Crimes against Women in India</title>
+    <script type="text/javascript" src="lib/d3.min.js"></script>
+    <script type="text/javascript" src="lib/topojson.js"></script>
+    <script type="text/javascript" src="lib/queue.min.js"></script>
+    <style type="text/css">
+    text {
+        font-family: sans-serif;
+    }
+    </style>
+</head>
+
+<body>
+    <div id="map"></div>
+</body>
+<script type="text/javascript">
+var h = 750,
+    w = 960,
+    m = {
+        top: 50,
+        bottom: 20,
+        left: 50,
+        rigth: 20
+    }
+inc = 25;
+
+var quantiles = [0, 0.25, 0.5, 0.75, 1];
+
+var format = d3.format(",.0f")
+
+// set-up unit projection and path
+var projection = d3.geo.mercator()
+    .scale(1)
+    .translate([0, 0]);
+
+var path = d3.geo.path()
+    .projection(projection);
+
+// set-up svg canvas
+var svg = d3.select("body").append("svg")
+    .attr("height", h)
+    .attr("width", w);
+
+// set-up headings
+svg.append("text").datum("Select Crimes")
+    .attr("font-size", 25)
+    .attr("font-weight", "bold")
+    .attr("x", 10)
+    .attr("y", 25)
+    .text(function(d) {
+        return d;
+    });
+
+svg.append("text").datum("No. of crimes")
+    .attr("font-size", 25)
+    .attr("font-weight", "bold")
+    .attr("x", w - 200)
+    .attr("y", 25)
+    .text(function(d) {
+        return d;
+    });
+// set-up scale for colour coding crime
+var cScale = d3.scale.linear()
+    .domain([0, 1]);
+
+queue()
+    .defer(d3.json, 'data/india.json') // read in topojson of India
+    .defer(d3.csv, 'data/crimes.csv') //// crime statistics from https://gigadom.wordpress.com/2015/01/16/a-crime-map-of-india-in-r-crime-against-women/
+    .await(makeMap);
+
+function makeMap(error, india, crimes) {
+
+    makeLegend();
+
+    var cat = getSelectors(crimes);
+
+    var selectTxt = svg.append("g")
+        .selectAll("text")
+        .data(cat);
+
+    selectTxt.enter()
+        .append("text")
+        .text(function(d, i) {
+            return d;
+        })
+        .attr("x", 10)
+        .attr("y", function(d, i) {
+            return i * inc + m.top;
+        })
+        .on("click", function(d) {
+            renderMap(d);
+        });
+
+    var states = [];
+    crimes.forEach(function(d) {
+        var el = d.State
+        states.push(el)
+    });
+
+    var bTopo = topojson.feature(india, india.objects.india),
+        topo = bTopo.features;
+    var x = "All crimes against woman"
+    topo.forEach(function(d, i) {
+        var n = states.indexOf(d.properties.NAME_1);
+        addCats(d, crimes, n, cat)
+    });
+
+    // calculate bounds, scale and transform 
+    // see http://stackoverflow.com/questions/14492284/center-a-map-in-d3-given-a-geojson-object
+    var b = path.bounds(bTopo),
+        s = .95 / Math.max((b[1][0] - b[0][0]) / w, (b[1][1] - b[0][1]) / h),
+        t = [(w - s * (b[1][0] + b[0][0])) / 2, (h - s * (b[1][1] + b[0][1])) / 2];
+
+    projection.scale(s)
+        .translate(t);
+
+    renderMap(x);
+        svg.selectAll(".label")
+            .data(topo)
+            .enter().append("text")
+            .filter(function(d) {
+                return d.properties.ENGTYPE_1 === "State";
+            })
+            .attr("class", "label")
+            .attr("transform", function(d) {
+                return "translate(" + path.centroid(d) + ")";
+            })
+            .attr("dy", ".35em")
+            .text(function(d) {
+                return d.properties.NAME_1;
+            })
+            .attr("font-size", 13)
+            .attr("fill", "#737373")
+            .attr("text-anchor", "middle");
+    function renderMap(x) {
+        var cRange = d3.extent(crimes, function(d, i) {
+            return +d[x]
+        });
+
+        cScale.domain(cRange);
+
+        var legendText = svg
+            .selectAll(".legendText")
+            .data(quantiles);
+
+        addLegendText(legendText, cRange);
+
+        var map = svg
+            .selectAll("path")
+            .data(topo);
+
+        addMap(map, cScale, x);
+
+    }
+}
+
+function makeLegend() {
+    var side = 15;
+
+    legendSquares = svg.append("g")
+        .selectAll(".rect")
+        .data(quantiles);
+
+    legendSquares.enter()
+        .append("rect")
+        .attr("x", w - 200)
+        .attr("y", function(d, i) {
+            return inc * i + m.top - side + 1;
+        })
+        .attr("height", side)
+        .attr("width", side)
+        .attr("fill", function(d) {
+            return interp(d);
+        });
+}
+
+function addLegendText(legendText, cRange) {
+    legendText.enter()
+        .append("text")
+        .attr("class", "legendText");
+
+    legendText
+        .text(function(d) {
+            var x = cRange[1] * d / 100,
+                y = format(x) * 100;
+            return format(y);
+        })
+        .attr("x", w - 175)
+        .attr("y", function(d, i) {
+            return i * inc + m.top;
+        })
+        .transition();
+
+    legendText.exit()
+        .transition()
+        .style("opacity", 0)
+        .remove();
+}
+
+function addMap(map, cScale, x) {
+    map.enter()
+        .append("path");
+
+    map.attr("d", path)
+        .transition()
+        .style("fill", function(d, i) {
+            if (d.properties[x] === null) {
+                return "grey";
+            } else {
+                return interp(cScale(+d.properties[x]));
+            }
+        })
+        .attr("opacity", 0.9);
+
+    map.exit()
+        .transition()
+        .style("opacity", 0)
+        .remove();
+
+}
+
+function interp(x) {
+    var ans = d3.interpolateLab("#fee6ce", "#7f2704")(x);
+    return ans
+}
+
+function getSelectors(data) {
+    var ans = d3.keys(data[0]);
+    ans.shift();
+    return ans;
+}
+
+function addCats(d, crimes, n, cat) {
+    cat.forEach(function(e, j) {
+        if (n !== -1) {
+            d.properties[e] = crimes[n][e];
+        } else {
+            d.properties[e] = null;
+        }
+    })
+}
+</script>
+
+</html>
